@@ -190,13 +190,24 @@ pre.diff .at{color:#569cd6}
 .menu label input{accent-color:var(--accent);margin:0}
 .menu label .n{margin-left:auto;font-family:var(--mono);color:var(--data);font-size:10px}
 .menu label .nm{overflow:hidden;text-overflow:ellipsis}
+/* loading */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;flex:none;width:14px;height:14px;border:2px solid var(--border);border-top-color:#4fc1ff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}
+.spin.sm{width:10px;height:10px;border-width:1.5px}
+.spin[hidden]{display:none}
+.loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px;color:var(--text-muted);font-size:12px}
+.busy{position:absolute;inset:26px 0 0;display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(30,30,30,.72);color:var(--text-muted);font-size:13px;z-index:3}
+.busy[hidden]{display:none}
+.busy .spin{width:18px;height:18px}
+.panel{position:relative}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.5s}}
 .err{background:var(--error-bg);color:var(--error);font-family:var(--mono);padding:6px 12px;white-space:pre-wrap}
 </style>
 </head>
 <body>
 <div class="top">
   <span class="title">git-graph-server</span>
-  <span class="repo" id="repo">loading…</span>
+  <span class="repo" id="repo"></span>
   <label title="Draw a dashed link from each rebased (or cherry-picked) commit to its previous version, like a merge parent. Teal: found by content. Purple: known only from merged PR data."><input type="checkbox" id="rebase"> Rebase as merge</label>
   <label title="Hide the gray commits: old versions that have a newer rebased or cherry-picked copy"><input type="checkbox" id="hideold"> Hide old copies</label>
   <label title="Hide branches whose work is already in another branch (a merged GitHub PR, a merge commit, already in main / your current branch, or all commits rebased or squashed elsewhere). Merged-in work folds into its merge commit, like git log --first-parent. Hover a dimmed branch in the sidebar to see why it counts as merged."><input type="checkbox" id="hidemerged"> Hide merged</label>
@@ -213,8 +224,9 @@ pre.diff .at{color:#569cd6}
   <div class="handle" data-for="shell" data-i="0"></div>
   <div id="main">
     <div class="panel" data-panel="list">
-      <div class="panel-header"><span>Commits <span class="meta" id="lcount"></span><span class="meta stats" id="lstats"></span></span><button class="mini"></button></div>
+      <div class="panel-header"><span>Commits <span class="meta" id="lcount"></span><span class="meta stats" id="lstats"></span> <span class="spin sm" id="prspin" hidden title="Loading GitHub PRs"></span></span><button class="mini"></button></div>
       <div class="panel-body" id="scroller"><div id="list"></div></div>
+      <div class="busy" id="busy" hidden><span class="spin"></span><span id="busytext">Loading commits…</span></div>
     </div>
     <div class="handle row" data-for="main" data-i="2"></div>
     <div id="detail">
@@ -256,14 +268,24 @@ async function api(path) {
   return j;
 }
 
+// Spinner markup, and a spinner that only appears if the wait lasts (no flash on fast requests).
+const spinner = text => `<div class="loading"><span class="spin"></span>${esc(text)}</div>`;
+function spinLater(el, text, ms = 150) { const t = setTimeout(() => { el.innerHTML = spinner(text); }, ms); return () => clearTimeout(t); }
+
 async function load() {
+  const busy = setTimeout(() => { $('busy').hidden = false; }, 150);
   try { data = await api('/api/graph'); hueOf = null; }
   catch (e) { $('list').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
-  allLinks = data.links.map(l => ({...l, kind: 'r'})); prs = []; prOf = new Map(); prStatus = 'loading PRs…';
+  finally { clearTimeout(busy); $('busy').hidden = true; }
+  allLinks = data.links.map(l => ({...l, kind: 'r'})); prs = []; prOf = new Map(); prStatus = 'loading PRs';
   updateRepoLine();
   $('rebase').checked = pref('rebase', data.rebaseDefault);
   loadFilters(); loadDate();
+  const U = urlState();
+  if (U) applyURLData(U);
   renderRefs(); render();
+  const c = U?.get('commit');
+  if (c) { const hit = rows.find(r => r.sha.startsWith(c.toLowerCase())); if (hit) select(hit.sha, true); }
   loadPRs();
 }
 
@@ -274,7 +296,9 @@ function updateRepoLine() {
 
 async function loadPRs() {
   let r;
+  $('prspin').hidden = false;
   try { r = await api('/api/prs'); } catch (e) { r = {prs: [], error: e.message}; }
+  finally { $('prspin').hidden = true; }
   prs = r.prs.filter(p => p.state === 'MERGED'); openPRs = r.prs.filter(p => p.state === 'OPEN');
   if (r.error) { prStatus = 'no PR info'; $('lstats').title = 'PR info unavailable: ' + r.error; updateRepoLine(); return; }
   applyPRs();
@@ -482,6 +506,7 @@ function render() {
       + `<div class="date">${fmtDate(c.date)}</div><div class="sha">${c.sha.slice(0, 8)}</div></div>`;
   });
   $('list').innerHTML = `<svg id="graph" width="${gw}" height="${rows.length * ROW + 22}">${svg}</svg>` + html;
+  syncURL();
 }
 
 // Color per author, from the name. Names are matched without case, spaces or punctuation
@@ -530,13 +555,19 @@ function select(sha, scroll) {
   const el = document.querySelector(`.c[data-i="${i}"]`);
   el.classList.add('sel');
   if (scroll) el.scrollIntoView({block: 'center'});
+  syncURL();
   showCommit(sha);
 }
 
 async function showCommit(sha) {
   $('dsha').textContent = sha.slice(0, 10);
   let d;
-  try { d = await api('/api/commit?sha=' + sha); } catch (e) { $('info').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  // redrawing the same commit (e.g. once PR data arrives) keeps opened PR sections open
+  const reopen = $('info').dataset.sha === sha
+    ? new Set([...$('info').querySelectorAll('details.prd[open]')].map(d => d.dataset.pr + d.dataset.part)) : new Set();
+  const done = spinLater($('info'), 'Loading commit…');
+  try { d = await api('/api/commit?sha=' + sha); } catch (e) { done(); $('info').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  done();
   if (selected !== sha) return;
   const link = s => `<a data-sha="${s}">${s.slice(0, 10)}</a>`;
   const how = l => l.kind === 'p' ? ` <span class="okp" title="Not found by content; GitHub says #${l.pr.number} landed this way">from PR #${l.pr.number}</span>`
@@ -547,15 +578,15 @@ async function showCommit(sha) {
     ? `<span class="k">PR</span><span class="v plain"><a href="${esc(pr.url)}" target="_blank" rel="noopener">#${pr.number}</a> ${esc(pr.title)}
      <span class="sub"><span class="openpr">${pr.draft ? 'draft' : 'open'}</span> · into ${esc(pr.base)} · from ${esc(pr.head)}</span>
      <span class="sub">commits ${pr.commits.map(link).join(' ')}</span>
-     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">loading…</div></details>
-     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">loading…</div></details></span>`
+     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">${spinner('Loading from GitHub…')}</div></details>
+     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">${spinner('Loading from GitHub…')}</div></details></span>`
     : `<span class="k">PR</span><span class="v plain"><a href="${esc(pr.url)}" target="_blank" rel="noopener">#${pr.number}</a> ${esc(pr.title)}
      <span class="sub">${role === 'landed' ? 'landed on' : 'original commit, replaced when merged into'} ${esc(pr.base)} · ${pr.method} · from ${esc(pr.head)} · ${pr.mergedAt.slice(0, 10)}</span>
      <span class="sub">commits ${pr.commits.map(link).join(' ')}</span>
      ${pr.method === 'merge commit' ? `<span class="sub">commits kept as-is, joined by merge commit ${link(pr.merge)}</span>`
        : pr.landed.length && pr.method !== 'fast-forward' ? `<span class="sub">landed as ${pr.landed.map(link).join(' ')}</span>` : ''}
-     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">loading…</div></details>
-     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">loading…</div></details></span>`).join('');
+     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">${spinner('Loading from GitHub…')}</div></details>
+     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">${spinner('Loading from GitHub…')}</div></details></span>`).join('');
   $('info').innerHTML = `<div class="kv">
     <span class="k">SHA</span><span class="v">${d.sha}</span>
     <span class="k">Author</span><span class="v plain">${esc(d.author)} &lt;${esc(d.email)}&gt; · ${fmtDate(d.date)}</span>
@@ -566,6 +597,8 @@ async function showCommit(sha) {
     ${prRows}
   </div><div class="msg">${esc(d.message)}</div>`
   + d.files.map(f => `<div class="file" data-path="${esc(f.path)}"><span class="p" title="${esc(f.path)}">&lrm;${esc(f.path)}</span><span class="add">+${f.add}</span><span class="del">-${f.del}</span></div>`).join('');
+  $('info').dataset.sha = sha;
+  $('info').querySelectorAll('details.prd').forEach(x => { if (reopen.has(x.dataset.pr + x.dataset.part)) x.open = true; });
   $('diff').innerHTML = d.files.length ? '' : '<div class="empty">No changes</div>';
   $('dpath').textContent = '';
   if (d.files.length) showDiff(sha, d.files[0].path);
@@ -575,7 +608,9 @@ async function showDiff(sha, path) {
   document.querySelectorAll('.file').forEach(e => e.classList.toggle('sel', e.dataset.path === path));
   $('dpath').textContent = path;
   let d;
-  try { d = await api(`/api/diff?sha=${sha}&path=${encodeURIComponent(path)}`); } catch (e) { $('diff').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  const done = spinLater($('diff'), 'Loading diff…');
+  try { d = await api(`/api/diff?sha=${sha}&path=${encodeURIComponent(path)}`); } catch (e) { done(); $('diff').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  done();
   const cls = l => l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ') ? 'h'
     : l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : l.startsWith('@@') ? 'at' : '';
   $('diff').innerHTML = `<pre class="diff">${d.diff.split('\n').map(l => `<span class="${cls(l)}">${esc(l) || ' '}</span>`).join('')}</pre>`;
@@ -793,7 +828,7 @@ $('refs').addEventListener('dblclick', e => {
 $('reload').onclick = load;
 $('wrap').checked = pref('wrap', true);
 $('diff').classList.toggle('wrap', $('wrap').checked);
-$('wrap').onchange = () => { setPref('wrap', $('wrap').checked); $('diff').classList.toggle('wrap', $('wrap').checked); };
+$('wrap').onchange = () => { setPref('wrap', $('wrap').checked); $('diff').classList.toggle('wrap', $('wrap').checked); syncURL(); };
 $('search').addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !e.target.value) return;
   const q = e.target.value.toLowerCase(), start = rows.findIndex(c => c.sha === selected) + 1;
@@ -828,6 +863,7 @@ function applyLayout() {
     p.classList.toggle('vert', m(k) && (k === 'side' || ((k === 'commit' || k === 'diff') && !bottomMin)));
     b.textContent = m(k) ? '+' : '–'; b.title = m(k) ? 'Restore' : 'Minimize';
   }
+  syncURL();
 }
 document.addEventListener('click', e => {
   const p = e.target.closest('[data-panel]');
@@ -865,6 +901,52 @@ document.querySelectorAll('.handle').forEach(h => h.addEventListener('pointerdow
   h.onpointermove = move;
   h.onpointerup = () => { h.classList.remove('drag'); h.onpointermove = null; saveMins(); };
 }));
+
+// ---- URL state: every non-default setting is in the query string, so a link reopens the same view.
+// A URL with any of these keys is the whole truth (missing key = default); a bare URL uses what this
+// browser remembers. The URL is rewritten in place (no history entries) after each change.
+const KNOWN = new Set(['rebase', 'hide-old', 'hide-merged', 'hide-local', 'author', 'branch', 'date', 'panels', 'wrap', 'commit']);
+const TOGGLES = [['hideold', 'hide-old'], ['hidemerged', 'hide-merged'], ['hidelocal', 'hide-local']];
+const PANELS = ['side', 'list', 'commit', 'diff'];
+function urlState() {
+  const p = new URLSearchParams(location.search);
+  return [...p.keys()].some(k => KNOWN.has(k)) ? p : null;
+}
+// view settings that don't need the repo data
+function applyURLView(U) {
+  for (const [id, key] of TOGGLES) $(id).checked = U.has(key);
+  $('wrap').checked = U.get('wrap') !== '0';
+  $('diff').classList.toggle('wrap', $('wrap').checked);
+  const open = U.has('panels') ? U.get('panels').split(',') : PANELS.filter(k => !MIN_DEFAULT[k]);
+  mins = Object.fromEntries(PANELS.map(k => [k, !open.includes(k)]));
+}
+// filters that need the repo data; an empty value (author=) means "none selected"
+function applyURLData(U) {
+  $('rebase').checked = U.has('rebase') ? U.get('rebase') !== '0' : !!data.rebaseDefault;
+  const set = (key, norm = x => x) => U.has(key) ? new Set(U.getAll(key).filter(Boolean).map(norm)) : null;
+  filters.authors.value = set('author', authorKey);
+  filters.branches.value = set('branch');
+  updateBranchBtn();
+  const d = U.get('date');
+  dateF = d === null ? null : REL[d] ? {rel: d} : {days: new Set(d.split(',').filter(Boolean))};
+}
+function syncURL() {
+  if (!data) return;
+  const p = new URLSearchParams();
+  if ($('rebase').checked !== !!data.rebaseDefault) p.set('rebase', $('rebase').checked ? '1' : '0');
+  for (const [id, key] of TOGGLES) if ($(id).checked) p.set(key, '1');
+  for (const [key, v] of [['author', filters.authors.value], ['branch', filters.branches.value]])
+    if (v) { if (!v.size) p.append(key, ''); for (const x of [...v].sort()) p.append(key, x); }
+  if (dateF) p.set('date', dateF.rel || [...dateF.days].sort().join(','));
+  const open = PANELS.filter(k => !mins[k]).join(',');
+  if (open !== PANELS.filter(k => !MIN_DEFAULT[k]).join(',')) p.set('panels', open || 'none');
+  if (!$('wrap').checked) p.set('wrap', '0');
+  if (selected && rows.some(r => r.sha === selected)) p.set('commit', selected.slice(0, 12));
+  const qs = p.toString(), url = location.pathname + (qs ? '?' + qs : '') + location.hash;
+  if (url !== location.pathname + location.search + location.hash) history.replaceState(null, '', url);
+}
+const U0 = urlState();
+if (U0) { applyURLView(U0); applyLayout(); }
 
 load();
 </script>
