@@ -810,7 +810,10 @@ document.addEventListener('keydown', e => {
 
 // minimize: a minimized panel keeps only its header (a vertical strip when it sits in a column)
 let mins = {};
-try { mins = JSON.parse(localStorage.getItem('min') || '{}'); } catch {}
+// first visit: only the commit list is open; after that, the viewer's own layout is remembered
+const MIN_DEFAULT = {side: true, commit: true, diff: true};
+mins = {...MIN_DEFAULT};
+try { const v = localStorage.getItem('min'); if (v) mins = JSON.parse(v); } catch {}
 const sizes = {shell: 220, main: 280, detail: 420};  // the fixed (non-1fr) track of each grid
 function applyLayout() {
   const m = k => !!mins[k], bottomMin = m('commit') && m('diff');
