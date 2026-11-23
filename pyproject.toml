@@ -1,14 +1,40 @@
 [project]
 name = "git-graph-server"
 version = "0.1.0"
-description = "Local web UI that draws your git branch graph, optionally linking rebased commits to their originals like merges"
+description = "Local web UI for your git branch graph that can draw rebased and squashed commits as merges, checked against GitHub PRs"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ilyas Wadjinny" }]
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["git", "graph", "rebase", "squash", "branches", "github", "pull-requests", "visualization", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.urls]
+Homepage = "https://github.com/Wadjinny/git-graph-server"
+Issues = "https://github.com/Wadjinny/git-graph-server/issues"
+Changelog = "https://github.com/Wadjinny/git-graph-server/blob/main/CHANGELOG.md"
 
 [project.scripts]
 git-graph-server = "git_graph_server.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/", ".github/"]

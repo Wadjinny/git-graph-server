@@ -336,7 +336,8 @@ function reach(refs, extra = () => []) {
 function mergedRefs() {
   const bySha = new Map(data.commits.map(c => [c.sha, c]));
   const short = r => r.type === 'remotes' ? r.name.split('/').slice(1).join('/') : r.name;
-  const keep = new Set([data.head, (data.default || '').split('/').slice(1).join('/')]);
+  // the default branch (from origin/HEAD; main and master when there is no remote) and the current one
+  const keep = new Set([data.head, ...(data.default ? [data.default.split('/').slice(1).join('/')] : ['main', 'master'])]);
   // history that has been merged somewhere: second parents of merge commits on real branches
   // (not tool refs like refs/t3 checkpoints, which are multi-parent too), plus main and the current branch
   const onBranches = reach(data.refs);

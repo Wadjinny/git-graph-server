@@ -6,6 +6,7 @@ import subprocess
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.metadata import PackageNotFoundError, version
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -64,9 +65,17 @@ def make_handler(repo, limit, rebase_default, prs_limit):
     return Handler
 
 
+def _version():
+    try:
+        return version("git-graph-server")
+    except PackageNotFoundError:  # running from a source checkout that isn't installed
+        return "unknown"
+
+
 def main():
     p = argparse.ArgumentParser(prog="git-graph-server", description=__doc__)
     p.add_argument("path", nargs="?", default=".", help="repo path (default: current directory)")
+    p.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
     p.add_argument("--port", type=int, default=7420)
     p.add_argument("--limit", type=int, default=3000, help="max commits to load")
     p.add_argument("--rebase", action="store_true", help="start with rebase links shown as merges")

@@ -1,5 +1,6 @@
 """Run with: uv run python -m unittest discover tests"""
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -9,8 +10,9 @@ from git_graph_server import git
 
 
 def sh(repo, *args):
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-           "GIT_COMMITTER_EMAIL": "t@t", "HOME": repo, "PATH": "/usr/bin:/bin"}
+    # isolated from the user's git config (signing, hooks...), works on Linux, macOS and Windows
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
     return subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True, text=True).stdout.strip()
 
 
@@ -23,7 +25,7 @@ def commit(repo, name, text, msg):
 
 class RebaseLinks(unittest.TestCase):
     def test_rebase_and_amended_rebase_are_linked(self):
-        with tempfile.TemporaryDirectory() as repo:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as repo:  # Windows: read-only git objects
             sh(repo, "init", "-qb", "main")
             commit(repo, "a", "a", "A")
             sh(repo, "checkout", "-qb", "feature")
