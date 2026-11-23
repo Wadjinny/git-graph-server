@@ -1,6 +1,6 @@
 [project]
 name = "git-graph-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local web UI for your git branch graph that can draw rebased and squashed commits as merges, checked against GitHub PRs"
 readme = "README.md"
 license = "MIT"

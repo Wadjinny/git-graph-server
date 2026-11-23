@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 (2026-11-23)
+
+- Diff lines wrap by default, so there is no sideways scrolling; a **Wrap** toggle in the Diff header switches it off.
+- The page has a favicon.
+
 ## 0.1.0 (2026-11-23)
 
 First release.
