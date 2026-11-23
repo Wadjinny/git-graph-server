@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>git-graph-server</title>
-<link rel="icon" href="data:,">
+<!-- icon: a main line, a branch, and the dashed teal rebase link -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%231e1e1e%22%2F%3E%3Cpath%20d%3D%22M10%206v20%22%20stroke%3D%22%234fc1ff%22%20stroke-width%3D%223.2%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M10%2021c0-5%2012-4%2012-9V9%22%20fill%3D%22none%22%20stroke%3D%22%23f48771%22%20stroke-width%3D%223.2%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M22%209c-4-3-8-3-12-2%22%20fill%3D%22none%22%20stroke%3D%22%234ec9b0%22%20stroke-width%3D%222.6%22%20stroke-dasharray%3D%223%202.2%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%2210%22%20cy%3D%2225%22%20r%3D%223.6%22%20fill%3D%22%234fc1ff%22%2F%3E%3Ccircle%20cx%3D%2210%22%20cy%3D%227%22%20r%3D%223.6%22%20fill%3D%22%234fc1ff%22%2F%3E%3Ccircle%20cx%3D%2222%22%20cy%3D%229%22%20r%3D%223.6%22%20fill%3D%22%23f48771%22%2F%3E%3C%2Fsvg%3E">
 <!-- PR descriptions and comments: Markdown -> HTML, then sanitized (the text comes from other people) -->
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
@@ -139,6 +140,12 @@ details.prd summary:hover{color:var(--text)}
 .add{color:#89d185}.del{color:var(--error)}
 pre.diff{margin:0;padding:6px 0;font:11px/1.45 var(--mono);min-width:max-content}
 pre.diff span{display:block;padding:0 10px}
+/* wrap long lines (default); continuation lines are indented past the +/- column */
+#diff.wrap pre.diff{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
+#diff.wrap pre.diff span{padding-left:20px;text-indent:-10px}
+.dtools{display:flex;align-items:center;gap:6px;flex:none}
+.dtools label{display:flex;align-items:center;gap:4px;font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-label);cursor:pointer}
+.dtools input{accent-color:var(--accent);margin:0}
 pre.diff .a{background:#23361f;color:#b5e3a9}
 pre.diff .d{background:var(--error-bg);color:#f5b3a5}
 pre.diff .h{color:var(--text-faint)}
@@ -151,7 +158,8 @@ pre.diff .at{color:#569cd6}
 .panel.min>.panel-header{cursor:pointer;border-bottom:0;height:100%}
 .panel.min>.panel-header:hover{color:var(--text)}
 .panel.min.vert>.panel-header{writing-mode:vertical-rl;justify-content:flex-start;gap:8px;padding:6px 4px}
-.panel.min.vert .mini{order:-1}
+.panel.min.vert .mini,.panel.min.vert .dtools{order:-1}
+.panel.min .dtools label{display:none}
 .panel.min.vert .meta{display:none}
 
 /* scrollbars in theme colors */
@@ -216,7 +224,7 @@ pre.diff .at{color:#569cd6}
       </div>
       <div class="handle" data-for="detail" data-i="0"></div>
       <div class="panel" data-panel="diff">
-        <div class="panel-header"><span>Diff <span class="meta" id="dpath"></span></span><button class="mini"></button></div>
+        <div class="panel-header"><span>Diff <span class="meta" id="dpath"></span></span><span class="dtools"><label title="Wrap long lines instead of scrolling sideways"><input type="checkbox" id="wrap"> Wrap</label><button class="mini"></button></span></div>
         <div class="panel-body" id="diff"></div>
       </div>
     </div>
@@ -783,6 +791,9 @@ $('refs').addEventListener('dblclick', e => {
   if (r && !e.target.closest('a')) setFilter('branches', new Set([r.dataset.key]));
 });
 $('reload').onclick = load;
+$('wrap').checked = pref('wrap', true);
+$('diff').classList.toggle('wrap', $('wrap').checked);
+$('wrap').onchange = () => { setPref('wrap', $('wrap').checked); $('diff').classList.toggle('wrap', $('wrap').checked); };
 $('search').addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !e.target.value) return;
   const q = e.target.value.toLowerCase(), start = rows.findIndex(c => c.sha === selected) + 1;
