@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rebase-graph</title>
+<link rel="icon" href="data:,">
+<!-- PR descriptions and comments: Markdown -> HTML, then sanitized (the text comes from other people) -->
+<script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#1e1e1e;--panel:#252526;--raised:#2d2d2d;--card:#2d2d30;--btn:#3a3d41;--hover:#2a2a2a;
+  --border:#3c3c3c;--text:#d4d4d4;--text-label:#bdbdbd;--text-muted:#9d9d9d;--text-faint:#808080;--text-ghost:#6d6d6d;
+  --accent:#0e639c;--accent-tint:#0e639c44;--data:#4ec9b0;--data-bright:#7ee0c8;--error:#f48771;--error-bg:#3a1d1d;
+  --r-sm:3px;--r-md:4px;--r-lg:6px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;--mono:'SF Mono',Menlo,Consolas,monospace;
+  --row:24px;
+}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--text);font:12px var(--font)}
+*{box-sizing:border-box}
+button,input{font:inherit;color:inherit}
+.top{display:flex;align-items:center;gap:10px;padding:6px 12px;background:var(--raised);border-bottom:1px solid var(--border);height:36px}
+.title{font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)}
+.repo{font-family:var(--mono);color:var(--data);flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top label{flex:none;white-space:nowrap;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-label);cursor:pointer}
+.top input[type=checkbox]{accent-color:var(--accent);margin:0}
+input.well{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;font-size:11px;width:200px}
+input.well:focus{border-color:var(--accent);outline:none}
+.btn{background:var(--btn);border:1px solid var(--border);border-radius:var(--r-md);padding:2px 8px;font-size:11px;cursor:pointer}
+.btn:hover,.btn.on{background:var(--accent)}
+#shell{display:grid;grid-template-columns:220px 4px 1fr;height:calc(100% - 36px)}
+#main{display:grid;grid-template-rows:1fr 4px 280px;min-width:0;min-height:0}
+#detail{display:grid;grid-template-columns:420px 4px 1fr;min-height:0}
+.handle{background:var(--border);cursor:col-resize}
+.handle.row{cursor:row-resize}
+.handle:hover,.handle.drag{background:var(--accent)}
+.panel{display:flex;flex-direction:column;background:var(--panel);min-width:0;min-height:0}
+.panel-header{display:flex;justify-content:space-between;align-items:center;padding:4px 10px;background:var(--raised);border-bottom:1px solid var(--border);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);min-height:26px}
+.top .btn,.title{flex:none;white-space:nowrap}
+.panel-header .meta.stats{color:var(--text-faint)}
+.panel-header .meta{font-family:var(--mono);color:var(--data);text-transform:none;letter-spacing:0;font-weight:400;font-size:11px}
+.panel-body{flex:1;min-height:0;overflow:auto}
+.empty{display:flex;height:100%;align-items:center;justify-content:center;color:var(--text-ghost);font-size:13px}
+
+/* sidebar */
+.group{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);padding:8px 10px 3px;cursor:pointer;user-select:none}
+.group::before{content:"\25BE  "}
+.group.closed::before{content:"\25B8  "}
+.group.closed+div{display:none}
+.ref{display:flex;align-items:center;gap:6px;padding:2px 10px 2px 18px;border-radius:var(--r-md);margin:0 4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-label)}
+.ref:hover{background:var(--hover)}
+.ref.merged{color:var(--text-ghost)}
+.ref.merged::after{content:"merged";font-size:9px;color:var(--text-ghost);margin-left:auto;font-family:var(--mono)}
+.ref.focus{background:var(--accent-tint);color:#fff}
+.ref.cur{color:#fff;font-weight:600}
+.ref.cur::after{content:"HEAD";font-size:9px;color:var(--data);font-family:var(--mono)}
+
+/* commit list */
+#list{position:relative}
+#graph{position:absolute;left:0;top:0;pointer-events:none}
+.c{display:grid;align-items:center;height:var(--row);white-space:nowrap;cursor:default;border-bottom:1px solid transparent}
+/* zebra rows; must stay before :hover/.sel so they win */
+.c:nth-of-type(even){background:rgba(255,255,255,.025)}
+.c:hover{background:var(--hover)}
+.c.sel{background:var(--accent-tint)}
+.c.sel .sha{color:var(--data-bright)}
+.c.old .subj{color:var(--text-faint)}
+.c>div{overflow:hidden;text-overflow:ellipsis;padding-right:10px}
+.subj{display:flex;align-items:center;gap:4px}
+.subj span.t{overflow:hidden;text-overflow:ellipsis}
+.author{color:var(--text-label)}
+.atag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-size:11px;line-height:16px;padding:0 6px;border-radius:var(--r-sm);color:hsl(var(--h) 65% 74%);background:hsl(var(--h) 35% 17%);border:1px solid hsl(var(--h) 30% 30%)}
+.dot{width:8px;height:8px;border-radius:2px;flex:none;background:hsl(var(--h) 60% 62%)}
+.date,.sha{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
+.sha{color:var(--data)}
+.badge{font-size:10px;padding:0 5px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--card);line-height:16px;flex:none}
+/* branch chips take their graph lane color (--lc) */
+.badge.heads{border-color:var(--lc);color:var(--lc);background:color-mix(in srgb,var(--lc) 16%,var(--card))}
+.badge.remotes{border-color:color-mix(in srgb,var(--lc) 55%,var(--border));color:color-mix(in srgb,var(--lc) 75%,var(--text-muted))}
+.badge.cur{background:var(--lc);color:var(--bg);font-weight:600}
+.badge.tags{color:#dcdcaa;border-color:#5a5a3c}
+a.badge,a.prtag{text-decoration:none;cursor:pointer}
+a.badge:hover,a.prtag:hover{filter:brightness(1.35);text-decoration:underline}
+.badge.pr{color:#c586c0;border-color:#5a3d5a;font-family:var(--mono)}
+.badge.pr.open{color:#89d185;border-color:#3d5a3a}
+.badge.pr.draft,.prtag.draft{color:var(--text-faint);border-color:var(--border)}
+.openpr{color:#89d185}
+.ref .rn{overflow:hidden;text-overflow:ellipsis}
+.prtag{flex:none;font-family:var(--mono);font-size:9px;color:#89d185;border:1px solid #3d5a3a;border-radius:var(--r-sm);padding:0 3px;line-height:13px}
+.badge.pr.src{opacity:.6;border-style:dashed}
+.ok{color:#89d185;font-family:var(--font)}
+.okp{color:#c586c0;font-family:var(--font)}
+details.prd{margin-top:3px}
+details.prd summary{cursor:pointer;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);user-select:none}
+details.prd summary:hover{color:var(--text)}
+.prfill{margin:4px 0 6px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm)}
+.prtext{white-space:pre-wrap;word-break:break-word;font-family:var(--font);font-size:11px;color:var(--text);margin-top:3px}
+.md{font-size:12px;line-height:1.5;color:var(--text);word-break:break-word;margin-top:3px}
+.md>:first-child{margin-top:0}.md>:last-child{margin-bottom:0}
+.md p,.md ul,.md ol,.md pre,.md table,.md blockquote{margin:0 0 8px}
+.md h1,.md h2,.md h3,.md h4{font-size:12px;font-weight:700;margin:12px 0 4px;color:#fff}
+.md h1,.md h2{font-size:13px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+.md ul,.md ol{padding-left:20px}
+.md a{color:#4fc1ff}
+.md code{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:0 3px}
+.md pre{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 8px;overflow:auto}
+.md pre code{border:0;padding:0;background:none}
+.md blockquote{padding:2px 10px;border-left:3px solid var(--border);color:var(--text-muted)}
+.md table{border-collapse:collapse;display:block;overflow:auto}
+.md th,.md td{border:1px solid var(--border);padding:2px 6px;text-align:left}
+.md th{background:var(--panel)}
+.md img{max-width:100%}
+.md hr{border:0;border-top:1px solid var(--border)}
+.md input[type=checkbox]{margin:0 4px 0 0;accent-color:var(--accent)}
+.cm+.cm{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.cmr+.cmr{margin-top:6px;margin-left:10px}
+.cmh{font-family:var(--mono);font-size:10px;color:var(--text-faint)}
+.cmpath{font-family:var(--mono);font-size:10px;color:var(--data);margin-bottom:4px;word-break:break-all}
+.rv{display:inline-block;font-size:10px;margin-top:3px;padding:0 5px;border-radius:var(--r-sm);border:1px solid var(--border);color:var(--text-muted)}
+.rv.approved{color:#89d185;border-color:#3d5a3a}
+.rv.changes_requested{color:var(--error);border-color:#5a3d3a}
+.kv .sub{display:block;color:var(--text-faint);font-size:10px}
+.badge.rb{color:var(--data);border-color:#2f5f55;font-family:var(--mono)}
+.colhead{display:grid;height:22px;align-items:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);background:var(--raised);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2}
+.colhead>div{padding-right:10px}
+
+/* detail */
+.kv{display:grid;grid-template-columns:70px 1fr;gap:3px 8px;padding:8px 10px;font-size:11px;border-bottom:1px solid var(--border)}
+.kv .k{color:var(--text-faint)}
+.kv .v{font-family:var(--mono);color:var(--data);word-break:break-all}
+.kv .v.plain{font-family:var(--font);color:var(--text)}
+.kv a{color:var(--data);cursor:pointer;text-decoration:underline dotted}
+.msg{white-space:pre-wrap;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px}
+.file{display:flex;gap:8px;padding:2px 10px;cursor:pointer;font-family:var(--mono);font-size:11px;white-space:nowrap}
+.file:hover{background:var(--hover)}
+.file.sel{background:var(--accent-tint)}
+.file .p{flex:1;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.add{color:#89d185}.del{color:var(--error)}
+pre.diff{margin:0;padding:6px 0;font:11px/1.45 var(--mono);min-width:max-content}
+pre.diff span{display:block;padding:0 10px}
+pre.diff .a{background:#23361f;color:#b5e3a9}
+pre.diff .d{background:var(--error-bg);color:#f5b3a5}
+pre.diff .h{color:var(--text-faint)}
+pre.diff .at{color:#569cd6}
+/* minimize */
+.panel-header>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini{flex:none;width:18px;height:18px;padding:0;line-height:16px;font-size:12px;background:none;border:1px solid transparent;border-radius:var(--r-sm);color:var(--text-faint);cursor:pointer}
+.mini:hover{background:var(--accent);color:#fff}
+.panel.min>.panel-body{display:none}
+.panel.min>.panel-header{cursor:pointer;border-bottom:0;height:100%}
+.panel.min>.panel-header:hover{color:var(--text)}
+.panel.min.vert>.panel-header{writing-mode:vertical-rl;justify-content:flex-start;gap:8px;padding:6px 4px}
+.panel.min.vert .mini{order:-1}
+.panel.min.vert .meta{display:none}
+
+/* scrollbars in theme colors */
+*{scrollbar-color:#4a4a4a var(--panel);scrollbar-width:thin}
+::-webkit-scrollbar{width:10px;height:10px;background:var(--panel)}
+::-webkit-scrollbar-thumb{background:#4a4a4a;border:2px solid var(--panel);border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#5a5a5a}
+::-webkit-scrollbar-corner{background:var(--panel)}
+
+/* author filter */
+.hbtn{background:none;border:0;padding:0;cursor:pointer;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit}
+.hbtn:hover,.hbtn.on{color:#fff}
+.hbtn.on{background:var(--accent);border-radius:var(--r-sm);padding:1px 5px}
+.menu{position:fixed;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:0 6px 20px rgba(0,0,0,.5);padding:6px;width:260px;display:flex;flex-direction:column;gap:6px}
+.menu[hidden]{display:none}
+.menu input.well{width:100%}
+#dmenu{width:320px}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.dsep{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-faint);padding:2px 2px 0;border-top:1px solid var(--border);padding-top:6px}
+.dn{display:flex;align-items:center}
+.dn label{flex:1;min-width:0}
+.dn .car{width:14px;flex:none;text-align:center;color:var(--text-faint);cursor:pointer;font-size:10px}
+.dn .car:hover{color:#fff}
+.menu .acts{display:flex;gap:6px}
+.menu .opts{max-height:320px;overflow:auto}
+.menu label{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:var(--r-md);cursor:pointer;font-size:11px;white-space:nowrap}
+.menu label:hover{background:var(--hover)}
+.menu label input{accent-color:var(--accent);margin:0}
+.menu label .n{margin-left:auto;font-family:var(--mono);color:var(--data);font-size:10px}
+.menu label .nm{overflow:hidden;text-overflow:ellipsis}
+.err{background:var(--error-bg);color:var(--error);font-family:var(--mono);padding:6px 12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="title">rebase-graph</span>
+  <span class="repo" id="repo">loading…</span>
+  <label title="Draw a dashed link from each rebased (or cherry-picked) commit to its previous version, like a merge parent. Teal: found by content. Purple: known only from merged PR data."><input type="checkbox" id="rebase"> Rebase as merge</label>
+  <label title="Hide the gray commits: old versions that have a newer rebased or cherry-picked copy"><input type="checkbox" id="hideold"> Hide old copies</label>
+  <label title="Hide branches whose work is already in another branch (a merged GitHub PR, a merge commit, already in main / your current branch, or all commits rebased or squashed elsewhere). Merged-in work folds into its merge commit, like git log --first-parent. Hover a dimmed branch in the sidebar to see why it counts as merged."><input type="checkbox" id="hidemerged"> Hide merged</label>
+  <label title="Hide local branches that have no branch of the same name on a remote, and commits only they reach"><input type="checkbox" id="hidelocal"> Hide local-only</label>
+  <button class="btn" data-filter="branches" id="branchbtn" title="Show only the history of some branches (double-click a branch in the sidebar to focus it)">Branches ▾</button>
+  <input class="well" id="search" style="flex:0 1 220px;min-width:90px" placeholder="Search subject / sha / author / #PR (Enter)">
+  <button class="btn" id="reload" title="Reload from git">Reload</button>
+</div>
+<div id="shell">
+  <div class="panel" data-panel="side">
+    <div class="panel-header"><span>Branches</span><button class="mini"></button></div>
+    <div class="panel-body" id="refs"></div>
+  </div>
+  <div class="handle" data-for="shell" data-i="0"></div>
+  <div id="main">
+    <div class="panel" data-panel="list">
+      <div class="panel-header"><span>Commits <span class="meta" id="lcount"></span><span class="meta stats" id="lstats"></span></span><button class="mini"></button></div>
+      <div class="panel-body" id="scroller"><div id="list"></div></div>
+    </div>
+    <div class="handle row" data-for="main" data-i="2"></div>
+    <div id="detail">
+      <div class="panel" data-panel="commit">
+        <div class="panel-header"><span>Commit <span class="meta" id="dsha"></span></span><button class="mini"></button></div>
+        <div class="panel-body" id="info"><div class="empty">Select a commit</div></div>
+      </div>
+      <div class="handle" data-for="detail" data-i="0"></div>
+      <div class="panel" data-panel="diff">
+        <div class="panel-header"><span>Diff <span class="meta" id="dpath"></span></span><button class="mini"></button></div>
+        <div class="panel-body" id="diff"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="menu" id="dmenu" hidden>
+  <div class="seg" id="drel"></div>
+  <div class="dsep">Exact dates</div>
+  <div class="opts" id="dtree"></div>
+</div>
+<div class="menu" id="fmenu" hidden>
+  <input class="well" id="fq">
+  <div class="acts"><button class="btn" id="fall">All</button><button class="btn" id="fnone">None</button></div>
+  <div class="opts" id="fopts"></div>
+</div>
+<script>
+const ROW = 24, LANE = 14, COLORS = ['#4fc1ff','#f48771','#89d185','#dcdcaa','#c586c0','#4ec9b0','#ce9178','#d7ba7d','#9cdcfe','#b5cea8'];
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let data, rows = [], selected = null;
+let allLinks = [], prs = [], openPRs = [], prOf = new Map(), prStatus = '';  // prs: merged only  // links = detected (kind 'r') + from PR data (kind 'p')
+
+function pref(key, def) { try { const v = localStorage.getItem(key); return v === null ? def : v === '1'; } catch { return def; } }
+function setPref(key, v) { try { localStorage.setItem(key, v ? '1' : '0'); } catch {} }
+
+async function api(path) {
+  const r = await fetch(path); const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function load() {
+  try { data = await api('/api/graph'); hueOf = null; }
+  catch (e) { $('list').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  allLinks = data.links.map(l => ({...l, kind: 'r'})); prs = []; prOf = new Map(); prStatus = 'loading PRs…';
+  updateRepoLine();
+  $('rebase').checked = pref('rebase', data.rebaseDefault);
+  loadFilters(); loadDate();
+  renderRefs(); render();
+  loadPRs();
+}
+
+function updateRepoLine() {
+  $('repo').textContent = `${data.repo}  ·  ${data.head}`;
+  $('lstats').textContent = `  ·  ${data.links.length} rebase links` + (prStatus ? `  ·  ${prStatus}` : '');
+}
+
+async function loadPRs() {
+  let r;
+  try { r = await api('/api/prs'); } catch (e) { r = {prs: [], error: e.message}; }
+  prs = r.prs.filter(p => p.state === 'MERGED'); openPRs = r.prs.filter(p => p.state === 'OPEN');
+  if (r.error) { prStatus = 'no PR info'; $('lstats').title = 'PR info unavailable: ' + r.error; updateRepoLine(); return; }
+  applyPRs();
+  const confirmed = allLinks.filter(l => l.kind === 'r' && l.pr).length, extra = allLinks.filter(l => l.kind === 'p').length;
+  prStatus = `${openPRs.length} open PRs  ·  ${prs.length} merged PRs: ${confirmed} links confirmed, ${extra} added`;
+  $('lstats').title = 'Confirmed: a detected link whose old commit is in a merged PR and whose new commit is what that PR landed as.\nAdded: PR source → landed pairs the content match missed (e.g. squash of several commits).';
+  updateRepoLine(); renderRefs(); render();
+  if (selected) showCommit(selected);
+}
+
+// Work out what each merged PR landed as, then confirm detected links and add the ones only GitHub knows.
+function applyPRs() {
+  const bySha = new Map(data.commits.map(c => [c.sha, c])), rowOf = new Map(data.commits.map((c, i) => [c.sha, i]));
+  prOf = new Map();
+  const add = (sha, pr, role) => (prOf.get(sha) || prOf.set(sha, []).get(sha)).push({pr, role});
+  // copy families: commits joined by detected links (a commit can be copied several times in a row)
+  const up = new Map(), fam = x => { while (up.has(x)) x = up.get(x); return x; };
+  for (const l of data.links) { const a = fam(l.old), b = fam(l.new); if (a !== b) up.set(a, b); }
+  const famPR = new Map(), extra = [];
+  for (const pr of prs) {
+    const m = bySha.get(pr.merge);
+    pr.method = !m ? 'not loaded' : m.parents.length > 1 ? 'merge commit' : pr.commits.includes(pr.merge) ? 'fast-forward'
+      : m.subject.endsWith(`(#${pr.number})`) ? 'squash' : 'rebase';
+    pr.landed = [];
+    if (pr.method === 'rebase') {  // the PR's commits were replayed: the N first-parent commits ending at the merge commit
+      for (let k = 0, s = pr.merge; k < pr.commits.length && bySha.has(s); k++, s = bySha.get(s).parents[0]) pr.landed.unshift(s);
+    } else if (pr.method === 'merge commit') pr.landed = [pr.merge, ...pr.commits];  // originals land as-is
+    else if (pr.merge) pr.landed = [pr.merge];
+    for (const sha of pr.commits) if (!pr.landed.includes(sha)) add(sha, pr, 'source');
+    for (const sha of pr.landed) add(sha, pr, 'landed');
+    // a family holding both an original commit and what it landed as is confirmed by this PR
+    const squash = pr.method === 'squash', rebase = pr.method === 'rebase' && pr.landed.length === pr.commits.length;
+    if (squash) for (const c of pr.commits) if (fam(c) === fam(pr.merge) && c !== pr.merge) famPR.set(fam(c), pr);
+    if (rebase) pr.commits.forEach((c, k) => { if (fam(c) === fam(pr.landed[k])) famPR.set(fam(c), pr); });
+    // pairs GitHub knows about that content matching missed (e.g. a squash of several commits)
+    const pairs = squash ? [[pr.commits.at(-1), pr.merge]] : rebase ? pr.commits.map((c, k) => [c, pr.landed[k]]) : [];
+    for (const [o, n] of pairs)
+      if (rowOf.get(o) > rowOf.get(n) && fam(o) !== fam(n) && !(squash && pr.commits.some(c => fam(c) === fam(n))))
+        extra.push({old: o, new: n, kind: 'p', pr});
+  }
+  allLinks = data.links.map(l => ({...l, kind: 'r', pr: famPR.get(fam(l.old))})).concat(extra);
+  for (const pr of openPRs) for (const sha of pr.commits) add(sha, pr, 'open');
+}
+
+// Old copies (the gray rows): commits that have a newer rebased/cherry-picked copy.
+// simplify() reconnects anything built on them to their nearest visible ancestor.
+const oldShas = () => new Set(allLinks.map(l => l.old));
+
+// Local branches with no same-named branch on any remote.
+function localOnlyRefs() {
+  const remote = new Set(data.refs.filter(r => r.type === 'remotes').map(r => r.name.split('/').slice(1).join('/')));
+  return new Set(data.refs.filter(r => r.type === 'heads' && !remote.has(r.name)).map(r => r.name));
+}
+
+// Commits reachable from the given refs. extra(sha) can add more edges to follow.
+function reach(refs, extra = () => []) {
+  const bySha = new Map(data.commits.map(c => [c.sha, c])), seen = new Set(), stack = refs.map(r => r.sha);
+  while (stack.length) {
+    const s = stack.pop();
+    if (seen.has(s) || !bySha.has(s)) continue;
+    seen.add(s); stack.push(...bySha.get(s).parents, ...extra(s));
+  }
+  return seen;
+}
+
+// Branches whose work is already in another branch -> Map(refKey, reason). main and the current branch never count.
+function mergedRefs() {
+  const bySha = new Map(data.commits.map(c => [c.sha, c]));
+  const short = r => r.type === 'remotes' ? r.name.split('/').slice(1).join('/') : r.name;
+  const keep = new Set([data.head, (data.default || '').split('/').slice(1).join('/')]);
+  // history that has been merged somewhere: second parents of merge commits on real branches
+  // (not tool refs like refs/t3 checkpoints, which are multi-parent too), plus main and the current branch
+  const onBranches = reach(data.refs);
+  const integrated = reach(data.refs.filter(r => r.type !== 'tags' && keep.has(short(r)))
+    .concat(data.commits.filter(c => c.parents.length > 1 && onBranches.has(c.sha)).flatMap(c => c.parents.slice(1).map(sha => ({sha})))));
+  const old = oldShas(), out = new Map();
+  for (const r of data.refs) {
+    if (r.type === 'tags' || keep.has(short(r))) continue;
+    const pr = prs.find(p => p.head === short(r) && (p.headOid === r.sha || p.commits.includes(r.sha)));
+    if (pr) { out.set(refKey(r), `PR #${pr.number} was merged into ${pr.base}`); continue; }
+    if (integrated.has(r.sha)) { out.set(refKey(r), 'merged in: its tip is in merged history (a merge commit, main or the current branch)'); continue; }
+    // every commit from the tip down to merged history has a newer copy elsewhere
+    let s = r.sha, k = 0, copied = true;
+    for (; s && bySha.has(s) && !integrated.has(s) && k < 1000; k++) {
+      const c = bySha.get(s);
+      if (c.parents.length < 2 && !old.has(s)) { copied = false; break; }
+      s = c.parents[0];
+    }
+    if (copied && k) out.set(refKey(r), 'all its commits were rebased or squashed into other branches');
+  }
+  return out;
+}
+
+function hiddenSet() {
+  const hidden = $('hideold').checked ? oldShas() : new Set();
+  const hideUnreached = seen => { for (const c of data.commits) if (!seen.has(c.sha)) hidden.add(c.sha); };
+  if ($('hidelocal').checked) {
+    const lo = localOnlyRefs();
+    hideUnreached(reach(data.refs.filter(r => !(r.type === 'heads' && lo.has(r.name)))));
+  }
+  hidden.cut = new Set();  // hidden and NOT reconnected: merged-in work folds into its merge commit
+  if ($('hidemerged').checked) {
+    // keep only the first-parent line of each branch still shown, like git log --first-parent
+    const merged = mergedRefs(), bySha = new Map(data.commits.map(c => [c.sha, c])), line = new Set();
+    for (const r of data.refs) if (!merged.has(refKey(r)))
+      for (let s = r.sha; bySha.has(s) && !line.has(s); s = bySha.get(s).parents[0]) line.add(s);
+    for (const c of data.commits) if (!line.has(c.sha)) { hidden.add(c.sha); hidden.cut.add(c.sha); }
+  }
+  const branches = filters.branches.value;
+  if (branches) {
+    // with "Rebase as merge" on, a branch's lineage includes the commits its commits were copied from
+    const olds = new Map();
+    if ($('rebase').checked) for (const l of allLinks) (olds.get(l.new) || olds.set(l.new, []).get(l.new)).push(l.old);
+    hideUnreached(reach(data.refs.filter(r => branches.has(refKey(r))), s => olds.get(s) || []));
+  }
+  if (dateF) for (const c of data.commits) if (!dateMatch(c.date)) hidden.add(c.sha);
+  const authors = filters.authors.value;
+  if (authors) for (const c of data.commits) if (!authors.has(authorKey(c.author))) hidden.add(c.sha);
+  return hidden;
+}
+
+// Drop hidden commits and reconnect each visible commit to its nearest visible ancestors.
+function simplify(commits, hidden) {
+  const bySha = new Map(commits.map(c => [c.sha, c])), memo = new Map();
+  const vis = sha => {
+    if (!bySha.has(sha) || !hidden.has(sha)) return [sha];
+    if (hidden.cut?.has(sha)) return [];
+    if (memo.has(sha)) return memo.get(sha);
+    memo.set(sha, []);
+    const out = [...new Set(bySha.get(sha).parents.flatMap(vis))];
+    memo.set(sha, out);
+    return out;
+  };
+  return commits.filter(c => !hidden.has(c.sha)).map(c => ({...c, parents: [...new Set(c.parents.flatMap(vis))]}));
+}
+
+function layout(commits, extra) {
+  const rowOf = new Map(commits.map((c, i) => [c.sha, i]));
+  const lanes = [], col = [], edges = [];
+  const free = () => { const i = lanes.indexOf(null); return i < 0 ? lanes.push(null) - 1 : i; };
+  commits.forEach((c, i) => {
+    let me = lanes.indexOf(c.sha);
+    if (me < 0) me = free();
+    for (let k = 0; k < lanes.length; k++) if (lanes[k] === c.sha) lanes[k] = null;
+    col[i] = me;
+    const ps = c.parents.map(p => [p, 'n']).concat(extra.get(c.sha) || []);
+    let first = true;
+    for (const [p, kind] of ps) {
+      if (!rowOf.has(p) || rowOf.get(p) <= i) { if (kind === 'n') edges.push({r1: i, c1: me, stub: true}); continue; }
+      let L = lanes.indexOf(p);
+      if (L < 0) L = first && lanes[me] === null ? me : free();
+      lanes[L] = p; first = false;
+      edges.push({r1: i, c1: me, L, p, kind});
+    }
+  });
+  for (const e of edges) if (!e.stub) { e.r2 = rowOf.get(e.p); e.c2 = col[e.r2]; }
+  return {col, edges, width: lanes.length};
+}
+
+function render() {
+  const showRb = $('rebase').checked;
+  const hidden = hiddenSet();
+  rows = simplify(data.commits, hidden);
+  $('lcount').textContent = rows.length === data.commits.length ? rows.length : `${rows.length} / ${data.commits.length}`;
+  const links = allLinks.filter(l => !hidden.has(l.old) && !hidden.has(l.new));
+  const extra = new Map();
+  if (showRb) for (const l of links) (extra.get(l.new) || extra.set(l.new, []).get(l.new)).push([l.old, l.kind]);
+  const {col, edges, width} = layout(rows, extra);
+
+  const gw = Math.min(Math.max(width, 1), 40) * LANE + 10;
+  const tmpl = `${gw}px minmax(200px,1fr) 140px 130px 80px`;
+  const x = c => 8 + c * LANE, y = r => r * ROW + ROW / 2 + 22;
+  const curve = (x1, y1, x2, y2) => x1 === x2 ? `L${x2} ${y2}` : `C${x1} ${(y1+y2)/2} ${x2} ${(y1+y2)/2} ${x2} ${y2}`;
+  let svg = '';
+  for (const e of edges) {
+    if (e.stub) { svg += `<path d="M${x(e.c1)} ${y(e.r1)}v${ROW/2}" stroke="${COLORS[e.c1 % 10]}" stroke-width="1.5" stroke-dasharray="2 2"/>`; continue; }
+    const X1 = x(e.c1), Y1 = y(e.r1), XL = x(e.L), X2 = x(e.c2), Y2 = y(e.r2);
+    let d = `M${X1} ${Y1}`;
+    if (e.r2 === e.r1 + 1) d += curve(X1, Y1, X2, Y2);
+    else d += curve(X1, Y1, XL, Y1 + ROW) + `L${XL} ${Y2 - ROW}` + curve(XL, Y2 - ROW, X2, Y2);
+    const rb = e.kind !== 'n';  // r: detected copy (teal), p: copy known only from PR data (purple)
+    svg += `<path d="${d}" fill="none" stroke="${e.kind === 'p' ? '#c586c0' : rb ? '#4ec9b0' : COLORS[e.L % 10]}" stroke-width="${rb ? 1.5 : 2}"${rb ? ' stroke-dasharray="4 3" opacity=".85"' : ''}/>`;
+  }
+  const refsBy = new Map();
+  const mergedHidden = $('hidemerged').checked ? mergedRefs() : new Map();
+  for (const r of data.refs) if (!mergedHidden.has(refKey(r))) (refsBy.get(r.sha) || refsBy.set(r.sha, []).get(r.sha)).push(r);
+  const copies = new Map();
+  for (const l of links) { copies.set(l.new, (copies.get(l.new) || 0) + 1); }
+  const oldSet = new Set(allLinks.map(l => l.old));
+  const authors = filters.authors.value, authLabel = authors ? `Author (${authors.size}) ▾` : 'Author ▾';
+  let html = `<div class="colhead" style="grid-template-columns:${tmpl}"><div style="padding-left:8px">Graph</div><div>Description</div>`
+    + `<div><button class="hbtn${authors ? ' on' : ''}" id="authbtn" data-filter="authors" title="Show only some authors">${authLabel}</button></div><div><button class="hbtn${dateF ? ' on' : ''}" id="datebtn" title="Show only some dates">${dateLabel()}</button></div><div>SHA</div></div>`;
+  if (!rows.length) html += '<div class="empty" style="height:200px">No commits match the filters</div>';
+  rows.forEach((c, i) => {
+    svg += `<circle cx="${x(col[i])}" cy="${y(i)}" r="${c.parents.length > 1 ? 3 : 4}" fill="${c.parents.length > 1 ? '#252526' : COLORS[col[i] % 10]}" stroke="${COLORS[col[i] % 10]}" stroke-width="2"/>`;
+    const badges = (refsBy.get(c.sha) || []).map(r => `<span class="badge ${r.type}${r.current ? ' cur' : ''}" style="--lc:${COLORS[col[i] % 10]}">${esc(r.name)}</span>`).join('')
+      + (showRb && copies.has(c.sha) ? `<span class="badge rb" title="Rebased/cherry-picked copy of an older commit">rebased</span>` : '')
+      + [...new Map((prOf.get(c.sha) || []).map(x => [x.pr.number, x])).values()].map(({pr, role}) =>
+          role === 'open' ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener" class="badge pr open${pr.draft ? ' draft' : ''}" title="#${pr.number} ${esc(pr.title)}\n${pr.draft ? 'Draft' : 'Open'} PR into ${esc(pr.base)}">#${pr.number}${pr.draft ? ' draft' : ''}</a>`
+          : `<a href="${esc(pr.url)}" target="_blank" rel="noopener" class="badge pr${role === 'source' ? ' src' : ''}" title="#${pr.number} ${esc(pr.title)}\n${role === 'landed' ? 'Landed on' : 'Original commit, replaced when merged into'} ${esc(pr.base)} (${pr.method})">#${pr.number}</a>`).join('');
+    html += `<div class="c${c.sha === selected ? ' sel' : ''}${oldSet.has(c.sha) ? ' old' : ''}" data-i="${i}" style="grid-template-columns:${tmpl}"><div></div>`
+      + `<div class="subj">${badges}<span class="t" title="${esc(c.subject)}">${esc(c.subject)}</span></div>`
+      + `<div class="author"><span class="atag" style="--h:${hue(c.author)}" title="${esc(c.author)} <${esc(c.email)}>">${esc(c.author)}</span></div>`
+      + `<div class="date">${fmtDate(c.date)}</div><div class="sha">${c.sha.slice(0, 8)}</div></div>`;
+  });
+  $('list').innerHTML = `<svg id="graph" width="${gw}" height="${rows.length * ROW + 22}">${svg}</svg>` + html;
+}
+
+// Color per author, from the name. Names are matched without case, spaces or punctuation
+// ("Jane Doe" = "janedoe"). Each person gets one of 12 well-spaced hues: the one their
+// name hashes to, or the next free one, so two people in the repo never share a color.
+const authorKey = name => name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+let hueOf = null;
+function hue(name) {
+  if (!hueOf) {
+    hueOf = new Map();
+    const taken = new Set();
+    for (const k of [...new Set(data.commits.map(c => authorKey(c.author)))].sort()) {
+      let h = 0; for (const ch of k) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+      let slot = h % 12;
+      for (let i = 0; i < 12 && taken.has(slot); i++) slot = (slot + 1) % 12;  // more than 12 people: colors repeat
+      taken.add(slot); hueOf.set(k, slot * 30 + 15);
+    }
+  }
+  const k = authorKey(name);
+  if (!hueOf.has(k)) { let h = 0; for (const ch of k) h = (h * 31 + ch.codePointAt(0)) >>> 0; return (h % 12) * 30 + 15; }
+  return hueOf.get(k);
+}
+
+function fmtDate(t) { return dayKey(t) + ' ' + new Date(t * 1000).toTimeString().slice(0, 5); }
+
+// the open PR whose source branch this is (remote refs match by name without the remote)
+const openOf = r => r.type === 'tags' ? null : openPRs.find(p => p.head === (r.type === 'remotes' ? r.name.split('/').slice(1).join('/') : r.name));
+
+function renderRefs() {
+  const groups = [['heads', 'Local'], ['remotes', 'Remote'], ['tags', 'Tags']];
+  const merged = mergedRefs(), hideM = $('hidemerged').checked;
+  $('refs').innerHTML = groups.map(([t, label]) => {
+    const lo = $('hidelocal').checked ? localOnlyRefs() : new Set();
+    const items = data.refs.filter(r => r.type === t && !(t === 'heads' && lo.has(r.name)) && !(hideM && merged.has(refKey(r))));
+    if (!items.length) return '';
+    return `<div class="group">${label} <span style="color:var(--text-ghost)">${items.length}</span></div><div>`
+      + items.map(r => `<div class="ref${r.current ? ' cur' : ''}${filters.branches.value?.has(refKey(r)) ? ' focus' : ''}${merged.has(refKey(r)) ? ' merged' : ''}" data-sha="${r.sha}" data-key="${esc(refKey(r))}" title="${esc(r.name)}${merged.has(refKey(r)) ? '\nMerged: ' + esc(merged.get(refKey(r))) : ''}${openOf(r) ? `\nOpen PR #${openOf(r).number}: ${esc(openOf(r).title)}` : ''}\n(double-click: show only this branch)"><span class="rn">${esc(r.name)}</span>${openOf(r) ? `<a class="prtag${openOf(r).draft ? ' draft' : ''}" href="${esc(openOf(r).url)}" target="_blank" rel="noopener" title="Open #${openOf(r).number} on GitHub">#${openOf(r).number}</a>` : ''}</div>`).join('') + '</div>';
+  }).join('');
+}
+
+function select(sha, scroll) {
+  const i = rows.findIndex(c => c.sha === sha);
+  if (i < 0) return;
+  selected = sha;
+  document.querySelectorAll('.c.sel').forEach(e => e.classList.remove('sel'));
+  const el = document.querySelector(`.c[data-i="${i}"]`);
+  el.classList.add('sel');
+  if (scroll) el.scrollIntoView({block: 'center'});
+  showCommit(sha);
+}
+
+async function showCommit(sha) {
+  $('dsha').textContent = sha.slice(0, 10);
+  let d;
+  try { d = await api('/api/commit?sha=' + sha); } catch (e) { $('info').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  if (selected !== sha) return;
+  const link = s => `<a data-sha="${s}">${s.slice(0, 10)}</a>`;
+  const how = l => l.kind === 'p' ? ` <span class="okp" title="Not found by content; GitHub says #${l.pr.number} landed this way">from PR #${l.pr.number}</span>`
+    : l.pr ? ` <span class="ok" title="Matches what GitHub says #${l.pr.number} landed as">✓ PR #${l.pr.number}</span>` : '';
+  const from = allLinks.filter(l => l.new === sha).map(l => link(l.old) + how(l)).join('<br>');
+  const to = allLinks.filter(l => l.old === sha).map(l => link(l.new) + how(l)).join('<br>');
+  const prRows = [...new Map((prOf.get(sha) || []).map(x => [x.pr.number, x])).values()].map(({pr, role}) => role === 'open'
+    ? `<span class="k">PR</span><span class="v plain"><a href="${esc(pr.url)}" target="_blank" rel="noopener">#${pr.number}</a> ${esc(pr.title)}
+     <span class="sub"><span class="openpr">${pr.draft ? 'draft' : 'open'}</span> · into ${esc(pr.base)} · from ${esc(pr.head)}</span>
+     <span class="sub">commits ${pr.commits.map(link).join(' ')}</span>
+     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">loading…</div></details>
+     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">loading…</div></details></span>`
+    : `<span class="k">PR</span><span class="v plain"><a href="${esc(pr.url)}" target="_blank" rel="noopener">#${pr.number}</a> ${esc(pr.title)}
+     <span class="sub">${role === 'landed' ? 'landed on' : 'original commit, replaced when merged into'} ${esc(pr.base)} · ${pr.method} · from ${esc(pr.head)} · ${pr.mergedAt.slice(0, 10)}</span>
+     <span class="sub">commits ${pr.commits.map(link).join(' ')}</span>
+     ${pr.method === 'merge commit' ? `<span class="sub">commits kept as-is, joined by merge commit ${link(pr.merge)}</span>`
+       : pr.landed.length && pr.method !== 'fast-forward' ? `<span class="sub">landed as ${pr.landed.map(link).join(' ')}</span>` : ''}
+     <details class="prd" data-pr="${pr.number}" data-part="body"><summary>Description</summary><div class="prfill">loading…</div></details>
+     <details class="prd" data-pr="${pr.number}" data-part="comments"><summary>Comments</summary><div class="prfill">loading…</div></details></span>`).join('');
+  $('info').innerHTML = `<div class="kv">
+    <span class="k">SHA</span><span class="v">${d.sha}</span>
+    <span class="k">Author</span><span class="v plain">${esc(d.author)} &lt;${esc(d.email)}&gt; · ${fmtDate(d.date)}</span>
+    <span class="k">Committer</span><span class="v plain">${esc(d.committer)} · ${fmtDate(d.cdate)}</span>
+    <span class="k">Parents</span><span class="v">${d.parents.map(link).join(' ') || '-'}</span>
+    ${from ? `<span class="k">Rebased from</span><span class="v">${from}</span>` : ''}
+    ${to ? `<span class="k">Rebased to</span><span class="v">${to}</span>` : ''}
+    ${prRows}
+  </div><div class="msg">${esc(d.message)}</div>`
+  + d.files.map(f => `<div class="file" data-path="${esc(f.path)}"><span class="p" title="${esc(f.path)}">&lrm;${esc(f.path)}</span><span class="add">+${f.add}</span><span class="del">-${f.del}</span></div>`).join('');
+  $('diff').innerHTML = d.files.length ? '' : '<div class="empty">No changes</div>';
+  $('dpath').textContent = '';
+  if (d.files.length) showDiff(sha, d.files[0].path);
+}
+
+async function showDiff(sha, path) {
+  document.querySelectorAll('.file').forEach(e => e.classList.toggle('sel', e.dataset.path === path));
+  $('dpath').textContent = path;
+  let d;
+  try { d = await api(`/api/diff?sha=${sha}&path=${encodeURIComponent(path)}`); } catch (e) { $('diff').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  const cls = l => l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ') ? 'h'
+    : l[0] === '+' ? 'a' : l[0] === '-' ? 'd' : l.startsWith('@@') ? 'at' : '';
+  $('diff').innerHTML = `<pre class="diff">${d.diff.split('\n').map(l => `<span class="${cls(l)}">${esc(l) || ' '}</span>`).join('')}</pre>`;
+}
+
+// events
+$('list').addEventListener('click', e => { if (e.target.closest('a')) return; const r = e.target.closest('.c'); if (r) select(rows[r.dataset.i].sha); });
+$('refs').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const g = e.target.closest('.group'); if (g) return g.classList.toggle('closed');
+  const r = e.target.closest('.ref'); if (r) select(r.dataset.sha, true);
+});
+const prDetail = new Map();  // number -> Promise of /api/pr
+let mdReady = false;
+// Rendered Markdown, or the plain text when the libraries could not load (offline).
+function md(text) {
+  if (!window.marked || !window.DOMPurify) return `<div class="prtext">${esc(text)}</div>`;
+  if (!mdReady) {
+    mdReady = true;
+    DOMPurify.addHook('afterSanitizeAttributes', n => { if (n.tagName === 'A') { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener noreferrer'); } });
+  }
+  return `<div class="md">${DOMPurify.sanitize(marked.parse(text, {gfm: true, breaks: true}))}</div>`;
+}
+$('info').addEventListener('toggle', async e => {
+  const d = e.target;
+  if (!d.matches?.('details.prd') || !d.open || d.dataset.loaded) return;
+  d.dataset.loaded = '1';
+  const n = d.dataset.pr, fill = d.querySelector('.prfill');
+  if (!prDetail.has(n)) prDetail.set(n, api('/api/pr?number=' + n).catch(err => { prDetail.delete(n); throw err; }));
+  let pr;
+  try { pr = await prDetail.get(n); } catch (err) { fill.innerHTML = `<div class="err">${esc(err.message)}</div>`; delete d.dataset.loaded; return; }
+  if (d.dataset.part === 'body') { fill.innerHTML = pr.body.trim() ? md(pr.body) : '<div class="cmh">No description</div>'; return; }
+  const when = iso => fmtDate(Date.parse(iso) / 1000);
+  const who = (a, date, url) => `<div class="cmh"><span class="atag" style="--h:${hue(a)}">${esc(a)}</span> ${when(date)}`
+    + (url ? ` <a href="${esc(url)}" target="_blank" rel="noopener" title="Open on GitHub">↗</a>` : '') + '</div>';
+  const STATE = {APPROVED: 'approved', CHANGES_REQUESTED: 'changes requested', COMMENTED: 'reviewed', DISMISSED: 'dismissed'};
+  fill.innerHTML = pr.items.map(i => i.kind === 'thread'
+    ? `<div class="cm"><div class="cmpath">${esc(i.path)}${i.line ? ':' + i.line : ''} <a href="${esc(i.url)}" target="_blank" rel="noopener">↗</a></div>`
+      + i.comments.map(c => `<div class="cmr">${who(c.author, c.date)}${md(c.body)}</div>`).join('') + '</div>'
+    : `<div class="cm">${who(i.author, i.date, i.url)}`
+      + (i.kind === 'review' ? `<span class="rv ${i.state.toLowerCase()}">${STATE[i.state] || i.state.toLowerCase()}</span>` : '')
+      + (i.body.trim() ? md(i.body) : '') + '</div>').join('') || '<div class="cmh">No comments</div>';
+  d.querySelector('summary').textContent = `Comments (${pr.items.reduce((a, i) => a + (i.comments ? i.comments.length : 1), 0)})`;
+}, true);  // toggle does not bubble
+$('info').addEventListener('click', e => {
+  const a = e.target.closest('a[data-sha]'); if (a) return select(a.dataset.sha, true);
+  const f = e.target.closest('.file'); if (f) showDiff(selected, f.dataset.path);
+});
+$('rebase').onchange = () => { setPref('rebase', $('rebase').checked); render(); };
+$('hideold').onchange = () => { setPref('hideold', $('hideold').checked); render(); };
+$('hideold').checked = pref('hideold', false);
+$('hidelocal').onchange = () => { setPref('hidelocal', $('hidelocal').checked); renderRefs(); render(); };
+$('hidelocal').checked = pref('hidelocal', false);
+$('hidemerged').onchange = () => { setPref('hidemerged', $('hidemerged').checked); renderRefs(); render(); };
+$('hidemerged').checked = pref('hidemerged', false);
+
+// Filter menus. value: null = show all, else a Set of the option values to keep (remembered per repo).
+const refKey = r => r.type + '/' + r.name;
+const KIND = {heads: 'local', remotes: 'remote', tags: 'tag'};
+const filters = {
+  authors: {noun: 'authors', value: null, opts() {
+    // one entry per person: spellings that differ only by case, spaces or punctuation are merged
+    const people = new Map();
+    for (const c of data.commits) {
+      const k = authorKey(c.author), p = people.get(k) || people.set(k, {n: 0, names: new Map()}).get(k);
+      p.n++; p.names.set(c.author, (p.names.get(c.author) || 0) + 1);
+    }
+    return [...people].sort((a, b) => b[1].n - a[1].n).map(([k, p]) => {
+      const names = [...p.names].sort((a, b) => b[1] - a[1]).map(([nm]) => nm);
+      return {value: k, label: names[0], note: p.n, hue: hue(names[0]), title: names.join(' / ')};
+    });
+  }},
+  branches: {noun: 'branches', value: null, opts() {
+    const order = r => (r.current ? 0 : 1) + {heads: 0, remotes: 2, tags: 4}[r.type];
+    return [...data.refs].sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name))
+      .map(r => ({value: refKey(r), label: r.name, note: r.current ? 'HEAD' : KIND[r.type]}));
+  }},
+};
+let openFilter = null;
+function loadFilters() {
+  for (const [k, f] of Object.entries(filters)) {
+    try { const v = localStorage.getItem(k + ':' + data.repo); f.value = v ? new Set(JSON.parse(v).map(x => k === 'authors' ? authorKey(x) : x)) : null; } catch { f.value = null; }
+  }
+  updateBranchBtn();
+}
+function updateBranchBtn() {
+  const v = filters.branches.value;
+  $('branchbtn').textContent = v ? `Branches (${v.size}) ▾` : 'Branches ▾';
+  $('branchbtn').classList.toggle('on', !!v);
+}
+function renderOpts() {
+  const f = filters[openFilter], q = $('fq').value.toLowerCase();
+  $('fopts').innerHTML = f.opts().filter(o => o.label.toLowerCase().includes(q))
+    .map(o => `<label><input type="checkbox" value="${esc(o.value)}"${!f.value || f.value.has(o.value) ? ' checked' : ''}>${o.hue === undefined ? '' : `<span class="dot" style="--h:${o.hue}"></span>`}<span class="nm" title="${esc(o.title || o.label)}">${esc(o.label)}</span><span class="n">${esc(o.note)}</span></label>`).join('');
+}
+function setFilter(k, s) {
+  const f = filters[k];
+  f.value = s && s.size === f.opts().length ? null : s;
+  try { localStorage.setItem(k + ':' + data.repo, f.value ? JSON.stringify([...f.value]) : ''); } catch {}
+  if (openFilter === k) renderOpts();
+  updateBranchBtn(); renderRefs(); render();
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-filter]');
+  if (!btn) return;
+  const m = $('fmenu'), k = btn.dataset.filter;
+  if (!m.hidden && openFilter === k) return (m.hidden = true);
+  openFilter = k;
+  const r = btn.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - 270) + 'px'; m.style.top = r.bottom + 4 + 'px';
+  $('fq').value = ''; $('fq').placeholder = 'Filter ' + filters[k].noun;
+  renderOpts(); m.hidden = false; $('fq').focus();
+});
+$('fq').oninput = renderOpts;
+$('fall').onclick = () => setFilter(openFilter, null);
+$('fnone').onclick = () => setFilter(openFilter, new Set());
+$('fopts').onchange = e => {
+  const f = filters[openFilter];
+  const s = f.value ? new Set(f.value) : new Set(f.opts().map(o => o.value));
+  e.target.checked ? s.add(e.target.value) : s.delete(e.target.value);
+  setFilter(openFilter, s);
+};
+document.addEventListener('mousedown', e => { if (!e.target.closest('#fmenu, [data-filter]')) $('fmenu').hidden = true; });
+
+// date filter: null = all, {rel} = today/yesterday/week/month, {days: Set('YYYY-MM-DD')} = exact days (local time)
+let dateF = null, dOpen = new Set();
+const REL = {today: 'Today', yesterday: 'Yesterday', week: 'This week', month: 'This month'};
+const pad = n => String(n).padStart(2, '0');
+const dayKey = t => { const d = new Date(t * 1000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+function relRange(rel) {  // [start, end) in unix seconds; weeks start on Monday
+  const n = new Date(), y = n.getFullYear(), m = n.getMonth(), d = n.getDate();
+  const at = (...a) => new Date(...a).getTime() / 1000;
+  return {today: [at(y, m, d), Infinity], yesterday: [at(y, m, d - 1), at(y, m, d)],
+    week: [at(y, m, d - (n.getDay() + 6) % 7), Infinity], month: [at(y, m, 1), Infinity]}[rel];
+}
+function dateMatch(t) {
+  if (!dateF) return true;
+  if (dateF.rel) { const [a, b] = relRange(dateF.rel); return t >= a && t < b; }
+  return dateF.days.has(dayKey(t));
+}
+const dayMatch = k => { const [y, m, d] = k.split('-').map(Number); return dateMatch(new Date(y, m - 1, d, 12).getTime() / 1000); };
+function dateLabel() {
+  return !dateF ? 'Date ▾' : dateF.rel ? `Date: ${REL[dateF.rel]} ▾` : `Date (${dateF.days.size} day${dateF.days.size === 1 ? '' : 's'}) ▾`;
+}
+function loadDate() {
+  try { const v = JSON.parse(localStorage.getItem('date:' + data.repo) || 'null'); dateF = v && (v.rel ? v : {days: new Set(v.days)}); } catch { dateF = null; }
+}
+function setDate(v) {
+  dateF = v;
+  try { localStorage.setItem('date:' + data.repo, JSON.stringify(v && (v.rel ? v : {days: [...v.days]}))); } catch {}
+  renderDateMenu(); render();
+}
+function renderDateMenu() {
+  $('drel').innerHTML = [['', 'All'], ...Object.entries(REL)].map(([k, l]) =>
+    `<button class="btn${(dateF?.rel || (dateF ? null : '')) === k ? ' on' : ''}" data-rel="${k}">${l}</button>`).join('');
+  // year > month > day, newest first, with commit counts
+  const tree = new Map();
+  for (const c of data.commits) {
+    const k = dayKey(c.date), y = k.slice(0, 4), ym = k.slice(0, 7);
+    if (!tree.has(y)) tree.set(y, new Map());
+    const ms = tree.get(y); if (!ms.has(ym)) ms.set(ym, new Map());
+    ms.get(ym).set(k, (ms.get(ym).get(k) || 0) + 1);
+  }
+  const ys = [...tree.keys()].sort().reverse();
+  if (!dOpen.size && ys.length) { dOpen.add(ys[0]); dOpen.add([...tree.get(ys[0]).keys()].sort().pop()); }
+  const state = days => { const n = days.filter(dayMatch).length; return n === 0 ? '' : n === days.length ? ' checked' : ' data-ind="1"'; };
+  const row = (k, depth, label, count, days, open) => `<div class="dn" style="padding-left:${4 + depth * 14}px">`
+    + (open === null ? '<span class="car"></span>' : `<span class="car" data-toggle="${k}">${open ? '▾' : '▸'}</span>`)
+    + `<label><input type="checkbox" data-k="${k}"${state(days)}><span class="nm">${label}</span><span class="n">${count}</span></label></div>`;
+  let html = '';
+  for (const y of ys) {
+    const ms = tree.get(y), yDays = [...ms.values()].flatMap(d => [...d.keys()]);
+    html += row(y, 0, y, [...ms.values()].reduce((a, d) => a + [...d.values()].reduce((x, v) => x + v, 0), 0), yDays, dOpen.has(y));
+    if (!dOpen.has(y)) continue;
+    for (const ym of [...ms.keys()].sort().reverse()) {
+      const ds = ms.get(ym), mName = new Date(+y, +ym.slice(5) - 1, 1).toLocaleString('en', {month: 'long'});
+      html += row(ym, 1, mName, [...ds.values()].reduce((a, v) => a + v, 0), [...ds.keys()], dOpen.has(ym));
+      if (!dOpen.has(ym)) continue;
+      for (const k of [...ds.keys()].sort().reverse()) {
+        const d = new Date(+y, +ym.slice(5) - 1, +k.slice(8));
+        html += row(k, 2, d.toLocaleString('en', {weekday: 'short'}) + ' ' + d.getDate(), ds.get(k), [k], null);
+      }
+    }
+  }
+  $('dtree').innerHTML = html;
+  $('dtree').querySelectorAll('[data-ind]').forEach(i => i.indeterminate = true);
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#datebtn')) return;
+  const m = $('dmenu');
+  if (!m.hidden) return (m.hidden = true);
+  const r = e.target.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - 330) + 'px'; m.style.top = r.bottom + 4 + 'px';
+  renderDateMenu(); m.hidden = false;
+});
+$('drel').onclick = e => { const b = e.target.closest('[data-rel]'); if (b) setDate(b.dataset.rel ? {rel: b.dataset.rel} : null); };
+$('dtree').onclick = e => {
+  const t = e.target.closest('[data-toggle]');
+  if (!t) return;
+  dOpen.has(t.dataset.toggle) ? dOpen.delete(t.dataset.toggle) : dOpen.add(t.dataset.toggle);
+  renderDateMenu();
+};
+$('dtree').onchange = e => {
+  const all = [...new Set(data.commits.map(c => dayKey(c.date)))], k = e.target.dataset.k;
+  const days = new Set(all.filter(dayMatch));  // start from what is shown now (also after a relative pick)
+  for (const d of all) if (d.startsWith(k)) e.target.checked ? days.add(d) : days.delete(d);
+  setDate(days.size === all.length ? null : {days});
+};
+document.addEventListener('mousedown', e => { if (!e.target.closest('#dmenu, #datebtn')) $('dmenu').hidden = true; });
+// double-click a branch in the sidebar: focus on just that branch's lineage
+$('refs').addEventListener('dblclick', e => {
+  const r = e.target.closest('.ref');
+  if (r && !e.target.closest('a')) setFilter('branches', new Set([r.dataset.key]));
+});
+$('reload').onclick = load;
+$('search').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.value) return;
+  const q = e.target.value.toLowerCase(), start = rows.findIndex(c => c.sha === selected) + 1;
+  for (let k = 0; k < rows.length; k++) {
+    const c = rows[(start + k) % rows.length];
+    if ((c.subject + ' ' + c.sha + ' ' + c.author + ' ' + (prOf.get(c.sha) || []).map(x => '#' + x.pr.number).join(' ')).toLowerCase().includes(q)) return select(c.sha, true);
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || !['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+  const i = rows.findIndex(c => c.sha === selected) + (e.key === 'ArrowDown' ? 1 : -1);
+  if (rows[i]) { e.preventDefault(); select(rows[i].sha, false); document.querySelector('.c.sel').scrollIntoView({block: 'nearest'}); }
+});
+
+// minimize: a minimized panel keeps only its header (a vertical strip when it sits in a column)
+let mins = {};
+try { mins = JSON.parse(localStorage.getItem('min') || '{}'); } catch {}
+const sizes = {shell: 220, main: 280, detail: 420};  // the fixed (non-1fr) track of each grid
+function applyLayout() {
+  const m = k => !!mins[k], bottomMin = m('commit') && m('diff');
+  $('shell').style.gridTemplateColumns = m('side') ? '28px 4px 1fr' : `${sizes.shell}px 4px 1fr`;
+  $('main').style.gridTemplateRows = m('list') && bottomMin ? '26px 4px 26px' : m('list') ? '26px 4px 1fr'
+    : bottomMin ? '1fr 4px 26px' : `1fr 4px ${sizes.main}px`;
+  $('detail').style.gridTemplateColumns = bottomMin ? '1fr 4px 1fr' : m('commit') ? '28px 4px 1fr'
+    : m('diff') ? '1fr 4px 28px' : `${sizes.detail}px 4px 1fr`;
+  for (const p of document.querySelectorAll('[data-panel]')) {
+    const k = p.dataset.panel, b = p.querySelector('.mini');
+    p.classList.toggle('min', m(k));
+    p.classList.toggle('vert', m(k) && (k === 'side' || ((k === 'commit' || k === 'diff') && !bottomMin)));
+    b.textContent = m(k) ? '+' : '–'; b.title = m(k) ? 'Restore' : 'Minimize';
+  }
+}
+document.addEventListener('click', e => {
+  const p = e.target.closest('[data-panel]');
+  if (!p || !(e.target.closest('.mini') || (p.classList.contains('min') && e.target.closest('.panel-header')))) return;
+  mins[p.dataset.panel] = !mins[p.dataset.panel];
+  saveMins(); applyLayout();
+});
+function saveMins() { try { localStorage.setItem('min', JSON.stringify(mins)); } catch {} }
+// per grid: [panels to collapse when the fixed track is dragged to 0, panels when the other track is]
+const SNAP = {shell: [['side'], null], main: [['commit', 'diff'], ['list']], detail: [['commit'], ['diff']]};
+applyLayout();
+
+// resizable splits: each handle resizes one track of its parent grid
+document.querySelectorAll('.handle').forEach(h => h.addEventListener('pointerdown', e => {
+  const grid = $(h.dataset.for), i = +h.dataset.i, vertical = h.classList.contains('row');
+  const prop = vertical ? 'gridTemplateRows' : 'gridTemplateColumns';
+  const tracks = getComputedStyle(grid)[prop].split(' ');
+  const start = vertical ? e.clientY : e.clientX, size = parseFloat(tracks[i]);
+  const total = vertical ? grid.clientHeight : grid.clientWidth;
+  h.classList.add('drag'); h.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const delta = (vertical ? ev.clientY : ev.clientX) - start;
+    const raw = size + (i === 0 ? delta : -delta);
+    // near an edge: that side collapses; dragged back out: it reopens at the pointer
+    const [a, b] = SNAP[grid.id];
+    const want = raw < 50 ? a : total - raw < 50 ? b : null;
+    for (const g of [a, b]) if (g) {
+      const isMin = g.every(k => mins[k]);
+      if (g === want && !isMin) g.forEach(k => mins[k] = true);
+      if (g !== want && isMin) g.forEach(k => mins[k] = false);
+    }
+    if (!want) sizes[grid.id] = Math.max(90, Math.min(total - 120, raw));
+    applyLayout();
+  };
+  h.onpointermove = move;
+  h.onpointerup = () => { h.classList.remove('drag'); h.onpointermove = null; saveMins(); };
+}));
+
+load();
+</script>
+</body>
+</html>
