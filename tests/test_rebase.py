@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rebase_graph import git
+from git_graph_server import git
 
 
 def sh(repo, *args):

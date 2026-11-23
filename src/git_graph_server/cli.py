@@ -1,4 +1,4 @@
-"""rebase-graph: serve a SourceGit-like branch graph of the git repo in the current directory."""
+"""git-graph-server: serve a SourceGit-like branch graph of the git repo in the current directory."""
 
 import argparse
 import json
@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import git
 
-INDEX = files("rebase_graph").joinpath("static/index.html").read_bytes()
+INDEX = files("git_graph_server").joinpath("static/index.html").read_bytes()
 
 
 def make_handler(repo, limit, rebase_default, prs_limit):
@@ -65,7 +65,7 @@ def make_handler(repo, limit, rebase_default, prs_limit):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="rebase-graph", description=__doc__)
+    p = argparse.ArgumentParser(prog="git-graph-server", description=__doc__)
     p.add_argument("path", nargs="?", default=".", help="repo path (default: current directory)")
     p.add_argument("--port", type=int, default=7420)
     p.add_argument("--limit", type=int, default=3000, help="max commits to load")
@@ -78,7 +78,7 @@ def main():
     try:
         repo = git.repo_root(args.path)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        sys.exit(f"rebase-graph: {Path(args.path).resolve()} is not a git repository")
+        sys.exit(f"git-graph-server: {Path(args.path).resolve()} is not a git repository")
 
     # localhost only: the API exposes the repo's contents
     handler = make_handler(repo, args.limit, args.rebase, 0 if args.no_prs else args.prs)
@@ -87,7 +87,7 @@ def main():
     except OSError:  # port taken (e.g. another repo open): let the OS pick one
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     url = f"http://127.0.0.1:{server.server_port}/"
-    print(f"rebase-graph: {repo} -> {url}  (Ctrl+C to stop)", flush=True)
+    print(f"git-graph-server: {repo} -> {url}  (Ctrl+C to stop)", flush=True)
     if not args.no_open:
         webbrowser.open(url)
     try:

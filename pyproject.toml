@@ -1,5 +1,5 @@
 [project]
-name = "rebase-graph"
+name = "git-graph-server"
 version = "0.1.0"
 description = "Local web UI that draws your git branch graph, optionally linking rebased commits to their originals like merges"
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-rebase-graph = "rebase_graph.cli:main"
+git-graph-server = "git_graph_server.cli:main"
 
 [build-system]
 requires = ["hatchling"]

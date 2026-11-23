@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rebase-graph</title>
+<title>git-graph-server</title>
 <link rel="icon" href="data:,">
 <!-- PR descriptions and comments: Markdown -> HTML, then sanitized (the text comes from other people) -->
 <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
@@ -187,7 +187,7 @@ pre.diff .at{color:#569cd6}
 </head>
 <body>
 <div class="top">
-  <span class="title">rebase-graph</span>
+  <span class="title">git-graph-server</span>
   <span class="repo" id="repo">loading…</span>
   <label title="Draw a dashed link from each rebased (or cherry-picked) commit to its previous version, like a merge parent. Teal: found by content. Purple: known only from merged PR data."><input type="checkbox" id="rebase"> Rebase as merge</label>
   <label title="Hide the gray commits: old versions that have a newer rebased or cherry-picked copy"><input type="checkbox" id="hideold"> Hide old copies</label>
